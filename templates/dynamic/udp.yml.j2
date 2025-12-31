@@ -1,0 +1,29 @@
+{# Collect UDP routers #}
+{%- set routers = traefik.dynamic.udp.routers | default({}) -%}
+
+{# Build enabled router map #}
+{%- set enabled = {} -%}
+{%- for name, r in routers.items() if r.enabled | default(false) -%}
+  {%- set _ = enabled.update({ name: r }) -%}
+{%- endfor -%}
+
+{# Render ONLY if something is enabled #}
+{%- if enabled %}
+udp:
+  routers:
+{% for name, r in enabled.items() %}
+    {{ name }}:
+      entryPoints: {{ r.entryPoints | default(['dns']) }}
+      service: {{ r.service }}
+{% endfor %}
+
+  services:
+{% for name, r in enabled.items() if r.servers is defined %}
+    {{ r.service }}:
+      loadBalancer:
+        servers:
+{% for s in r.servers %}
+          - address: "{{ s }}"
+{% endfor %}
+{% endfor %}
+{% endif %}

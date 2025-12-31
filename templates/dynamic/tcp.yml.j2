@@ -1,0 +1,32 @@
+{# Collect TCP routers #}
+{%- set routers = traefik.dynamic.tcp.routers | default({}) -%}
+
+{%- set enabled = {} -%}
+{%- for name, r in routers.items() if r.enabled | default(false) -%}
+  {%- set _ = enabled.update({ name: r }) -%}
+{%- endfor -%}
+
+{%- if enabled %}
+tcp:
+  routers:
+{% for name, r in enabled.items() %}
+    {{ name }}:
+      entryPoints: {{ r.entryPoints | default(['mqttsecure']) }}
+      rule: "{{ r.rule | default('HostSNI(`*`)') }}"
+      service: {{ r.service }}
+{% if r.tls is defined %}
+      tls:
+{{ r.tls | to_nice_yaml(indent=2) | indent(8, true) }}
+{% endif %}
+{% endfor %}
+
+  services:
+{% for name, r in enabled.items() if r.servers is defined %}
+    {{ r.service }}:
+      loadBalancer:
+        servers:
+{% for s in r.servers %}
+          - address: "{{ s }}"
+{% endfor %}
+{% endfor %}
+{% endif %}

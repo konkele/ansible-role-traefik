@@ -1,0 +1,5 @@
+tls:
+  options:
+    default:
+      minVersion: "{{ traefik.dynamic.tls.min_version | default('VersionTLS13') }}"
+      sniStrict: {{ traefik.dynamic.tls.sni_strict | default(true) | bool | lower }}

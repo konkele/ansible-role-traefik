@@ -1,0 +1,43 @@
+# -----------------------------------------------------------------------------
+# Traefik Role Main Task File
+# -----------------------------------------------------------------------------
+#
+# Purpose:
+#   Orchestrate Traefik deployment:
+#     1. Load optional vars file
+#     2. Merge configuration layers (defaults < group < host)
+#     3. Prepare directories and normalize variables
+#     4. Render dynamic templates
+#     5. Deploy stack via docker_stack role
+#
+# Notes:
+#   - All directories and services are derived from `docker_stack` structure
+#   - Dynamic HTTP, TCP, UDP, and TLS configs are supported
+# -----------------------------------------------------------------------------
+
+- name: Load traefik variables
+  include_vars:
+    file: "{{ traefik_vars_file }}"
+  when: traefik_vars_file is defined
+
+- name: Merge variables
+  import_tasks: merge.yml
+  vars:
+    merge_var_specs:
+      - name: traefik
+      - name: docker_stack
+
+- name: Prepare Variables
+  import_tasks: prepare.yml
+
+- name: Ensure stack directories
+  import_tasks: directories.yml
+  when: docker_stack.state == 'present'
+
+- name: Render Traefik dynamic configurations
+  import_tasks: render.yml
+  when: docker_stack.state == 'present'
+
+- name: Deploy Traefik using the role docker_stack
+  include_role:
+    name: docker_stack

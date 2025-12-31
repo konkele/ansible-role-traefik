@@ -1,0 +1,88 @@
+{# Collect HTTP routers #}
+{%- set routers = traefik.dynamic.http.routers | default({}) -%}
+
+{# Enabled routers only #}
+{%- set enabled = {} -%}
+{%- for name, r in routers.items() -%}
+  {%- if r.enabled | default(false) | bool -%}
+    {%- set _ = enabled.update({ name: r }) -%}
+  {%- endif -%}
+{%- endfor -%}
+
+{# Services derived from routers with servers #}
+{%- set services = {} -%}
+{%- for name, r in enabled.items() -%}
+  {%- if r.servers is defined and r.servers | length > 0 -%}
+    {%- set _ = services.update({ name: r.servers }) -%}
+  {%- endif -%}
+{%- endfor -%}
+
+{# Routers requiring basic auth #}
+{%- set auth_routers = {} -%}
+{%- for name, r in enabled.items() -%}
+  {%- if r.basic_auth_users is defined and r.basic_auth_users | length > 0 -%}
+    {%- set _ = auth_routers.update({ name: r }) -%}
+  {%- endif -%}
+{%- endfor -%}
+
+http:
+{% if enabled %}
+  routers:
+{% for name, r in enabled.items() %}
+    {{ name }}:
+      rule: {{ r.rule | quote }}
+      entryPoints:
+{{ r.entryPoints | default(['websecure']) | to_nice_yaml(indent=2) | indent(8, true) }}
+      service: {{ r.service | default(name) }}
+{% if r.tls is defined and r.tls | bool %}
+      tls:
+        certResolver: letsencrypt
+{% endif %}
+{% if r.middlewares is defined or name in auth_routers %}
+      middlewares:
+{% for mw in r.middlewares | default([]) | unique %}
+        - {{ mw }}
+{% endfor %}
+{% if name in auth_routers %}
+        - {{ name }}-auth
+{% endif %}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{%- set services = {} %}
+{% for name, r in enabled.items() %}
+  {% if r.servers is defined and r.servers | length > 0 %}
+    {% set svc_name = r.service | default(name) %}
+    {% set _ = services.update({ svc_name: r.servers }) %}
+  {% endif %}
+{% endfor %}
+
+{% if services %}
+  services:
+{% for svc, servers in services.items() %}
+    {{ svc }}:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+{% for s in servers %}
+          - url: "{{ s }}"
+{% endfor %}
+{% endfor %}
+{% endif %}
+
+{% if traefik.dynamic.middlewares or auth_routers %}
+  middlewares:
+{% for name, mw in (traefik.dynamic.middlewares | default({})).items() %}
+    {{ name }}:
+{{ mw | to_nice_yaml(indent=2) | indent(6, true) }}
+{% endfor %}
+{% for name, r in auth_routers.items() %}
+    {{ name }}-auth:
+      basicAuth:
+        users:
+{% for user in r.basic_auth_users %}
+          - "{{ user }}"
+{% endfor %}
+{% endfor %}
+{% endif %}
