@@ -4,13 +4,20 @@
 #
 # Purpose:
 #   Orchestrate Traefik deployment:
-#     1. Load optional vars file
+#     1. Load traefik docker_stacks_default from file
 #     2. Merge configuration layers (defaults < group < host)
 #     3. Normalize directories
 #     4. Merge role-specific variables
 #     5. Include Traefik stack tasks
 #
 # -----------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Load traefik docker_stacks_defaults vars/traefik.yml
+# ---------------------------------------------------------------------------
+- name: Load Traefik role variables
+  ansible.builtin.include_vars:
+    file: "vars/traefik.yml"
 
 # ---------------------------------------------------------------------------
 # Merge docker stacks (defaults < group < host)
@@ -64,9 +71,7 @@
               | combine({
                   'base': { 'path': stack_item.value.directories.base.path | default('/opt/stacks') },
                   'stack': { 'path': stack_item.value.directories.stack.path | default((stack_item.value.directories.base.path | default('/opt/stacks')) ~ '/' ~ stack_item.value.name) },
-                  'config': { 'path': stack_item.value.directories.config.path | default((stack_item.value.directories.base.path | default('/opt/stacks')) ~ '/config') },
-                  'data': { 'path': stack_item.value.directories.data.path | default((stack_item.value.directories.base.path | default('/opt/stacks')) ~ '/data') },
-                  'secrets': { 'path': stack_item.value.directories.secrets.path | default((stack_item.value.directories.base.path | default('/opt/stacks')) ~ '/secrets') }
+                  'config': { 'path': stack_item.value.directories.config.path | default((stack_item.value.directories.base.path | default('/opt/stacks')) ~ '/config') }
                 },
                 recursive=True
               )
@@ -75,6 +80,25 @@
           recursive=True
         )
       }}
+
+# ---------------------------------------------------------------------------
+# Apply optional Traefik-specific config directory override
+# ---------------------------------------------------------------------------
+- name: Override Traefik config directory if traefik_config_path is set
+  ansible.builtin.set_fact:
+    docker_stacks_map: >-
+      {{
+        docker_stacks_map | combine({
+          'traefik': docker_stacks_map['traefik'] | combine({
+            'directories': {
+              'config': {
+                'path': traefik_config_path
+              }
+            }
+          }, recursive=True)
+        }, recursive=True)
+      }}
+  when: traefik_config_path is defined
 
 # ---------------------------------------------------------------------------
 # Fail early if Traefik stack is missing

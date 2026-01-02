@@ -1,9 +1,9 @@
 galaxy_info:
   author: Eric Konkel
   description: >
-    Role to deploy and manage Traefik (v3.x) in Docker Compose or Swarm mode,
-    including dynamic configs, directories, and service restart.
-  company: YourCompanyName
+    Ansible role to generate Traefik v3.x dynamic configuration files
+    (HTTP, TCP, UDP routers, TLS options) in a configurable directory.
+    This role does not deploy Traefik itself.
   license: MIT
   min_ansible_version: 2.12
   platforms:
@@ -17,11 +17,10 @@ galaxy_info:
         - 20.04
         - 22.04
   galaxy_tags:
-    - docker
     - traefik
     - reverse-proxy
-    - swarm
-    - compose
+    - dynamic-config
+    - template
+    - ansible
 
 dependencies: []
-
