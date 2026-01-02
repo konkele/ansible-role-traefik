@@ -6,38 +6,104 @@
 #   Orchestrate Traefik deployment:
 #     1. Load optional vars file
 #     2. Merge configuration layers (defaults < group < host)
-#     3. Prepare directories and normalize variables
-#     4. Render dynamic templates
-#     5. Deploy stack via docker_stack role
+#     3. Normalize directories
+#     4. Merge role-specific variables
+#     5. Include Traefik stack tasks
 #
-# Notes:
-#   - All directories and services are derived from `docker_stack` structure
-#   - Dynamic HTTP, TCP, UDP, and TLS configs are supported
 # -----------------------------------------------------------------------------
 
-- name: Load traefik variables
-  include_vars:
-    file: "{{ traefik_vars_file }}"
-  when: traefik_vars_file is defined
+# ---------------------------------------------------------------------------
+# Merge docker stacks (defaults < group < host)
+# ---------------------------------------------------------------------------
+- name: Merge docker stacks into lookup dictionary with precedence
+  ansible.builtin.set_fact:
+    docker_stacks_map: >-
+      {{
+        dict(
+          (
+            docker_stacks_defaults | default([]) +
+            docker_stacks | default([]) +
+            docker_stacks_override | default([])
+          )
+          | sort(attribute='name')
+          | groupby('name')
+          | map('last')
+          | map('last')
+          | map(attribute='name')
+          | zip(
+              (
+                docker_stacks_defaults | default([]) +
+                docker_stacks | default([]) +
+                docker_stacks_override | default([])
+              )
+              | sort(attribute='name')
+              | groupby('name')
+              | map('last')
+              | map('last')
+            )
+        )
+      }}
 
+# -----------------------------------------------------------------------------
+# Normalize stack directories (base, stack, config, data, secrets)
+# -----------------------------------------------------------------------------
+- name: Normalize directories for each stack
+  ansible.builtin.set_fact:
+    docker_stacks_map: "{{ docker_stacks_map | combine({ stack_item.key: normalized_stack }, recursive=True) }}"
+  loop: "{{ docker_stacks_map | dict2items }}"
+  loop_control:
+    loop_var: stack_item
+    label: "{{ stack_item.key }}"
+  vars:
+    normalized_stack: >-
+      {{
+        stack_item.value
+        | combine({
+            'directories': (
+              stack_item.value.directories | default({})
+              | combine({
+                  'base': { 'path': stack_item.value.directories.base.path | default('/opt/stacks') },
+                  'stack': { 'path': stack_item.value.directories.stack.path | default((stack_item.value.directories.base.path | default('/opt/stacks')) ~ '/' ~ stack_item.value.name) },
+                  'config': { 'path': stack_item.value.directories.config.path | default((stack_item.value.directories.base.path | default('/opt/stacks')) ~ '/config') },
+                  'data': { 'path': stack_item.value.directories.data.path | default((stack_item.value.directories.base.path | default('/opt/stacks')) ~ '/data') },
+                  'secrets': { 'path': stack_item.value.directories.secrets.path | default((stack_item.value.directories.base.path | default('/opt/stacks')) ~ '/secrets') }
+                },
+                recursive=True
+              )
+            )
+          },
+          recursive=True
+        )
+      }}
+
+# ---------------------------------------------------------------------------
+# Fail early if Traefik stack is missing
+# ---------------------------------------------------------------------------
+- name: Fail if 'traefik' stack is not defined
+  ansible.builtin.fail:
+    msg: "No stack with name 'traefik' was found in merged docker_stacks"
+  when: "'traefik' not in docker_stacks_map"
+
+# -----------------------------------------------------------------------------
+# Extract Traefik stack into variable
+# -----------------------------------------------------------------------------
+- name: Set Traefik stack variable
+  ansible.builtin.set_fact:
+    traefik_stack: "{{ docker_stacks_map['traefik'] }}"
+
+# ---------------------------------------------------------------------------
+# Merge role-specific variables
+# ---------------------------------------------------------------------------
 - name: Merge variables
   import_tasks: merge.yml
   vars:
     merge_var_specs:
       - name: traefik
-      - name: docker_stack
 
-- name: Prepare Variables
-  import_tasks: prepare.yml
-
-- name: Ensure stack directories
-  import_tasks: directories.yml
-  when: docker_stack.state == 'present'
-
-- name: Render Traefik dynamic configurations
-  import_tasks: render.yml
-  when: docker_stack.state == 'present'
-
-- name: Deploy Traefik using the role docker_stack
-  include_role:
-    name: docker_stack
+# ---------------------------------------------------------------------------
+# Include Traefik stack tasks
+# ---------------------------------------------------------------------------
+- name: Include traefik stack tasks
+  include_tasks: traefik_stack.yml
+  vars:
+    stack_input: "{{ traefik_stack }}"

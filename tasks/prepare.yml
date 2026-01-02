@@ -1,7 +1,7 @@
 # -------------------------------------------------------------------
 # Purpose:
-#   Normalize and finalize the docker_stack data structure before rendering
-#   templates or creating directories.
+#   Prepare Traefik-specific filesystem paths and normalize dynamic
+#   HTTP router configuration prior to rendering templates.
 # -------------------------------------------------------------------
 
 - name: Ensure docker_stack.state is defined
@@ -15,73 +15,59 @@
           )
       }}
 
-- name: Compute base and stack paths
-  ansible.builtin.set_fact:
-    _base_path: "{{ docker_stack.directories.base.path | default('/opt/stacks') }}"
-
-- name: Compute stack path
-  ansible.builtin.set_fact:
-    _stack_path: "{{ docker_stack.directories.stack.path | default(_base_path ~ '/' ~ docker_stack.name) }}"
-
-- name: Compute core directories
-  ansible.builtin.set_fact:
-    _core_dirs:
-      base:
-        path: "{{ _base_path }}"
-        owner: "{{ docker_stack.directories.base.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.base.group | default(docker_stack.directories_defaults.group) | default('docker') }}"
-        mode: "{{ docker_stack.directories.base.mode | default(docker_stack.directories_defaults.mode) | default('0755') }}"
-      stack:
-        path: "{{ _stack_path }}"
-        owner: "{{ docker_stack.directories.stack.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.stack.group | default(docker_stack.directories_defaults.group) | default('docker') }}"
-        mode: "{{ docker_stack.directories.stack.mode | default(docker_stack.directories_defaults.mode) | default('0755') }}"
-      config:
-        path: "{{ docker_stack.directories.config.path | default(_stack_path ~ '/config') }}"
-        owner: "{{ docker_stack.directories.config.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.config.group | default(docker_stack.directories_defaults.group) | default('docker') }}"
-        mode: "{{ docker_stack.directories.config.mode | default(docker_stack.directories_defaults.mode) | default('0755') }}"
-      data:
-        path: "{{ docker_stack.directories.data.path | default(_stack_path ~ '/data') }}"
-        owner: "{{ docker_stack.directories.data.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.data.group | default(docker_stack.directories_defaults.group) | default('docker') }}"
-        mode: "{{ docker_stack.directories.data.mode | default(docker_stack.directories_defaults.mode) | default('0755') }}"
-      secrets:
-        path: "{{ docker_stack.directories.secrets.path | default(_stack_path ~ '/secrets') }}"
-        owner: "{{ docker_stack.directories.secrets.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.secrets.group | default(docker_stack.directories_defaults.group) | default('root') }}"
-        mode: "{{ docker_stack.directories.secrets.mode | default(docker_stack.directories_defaults.mode) | default('0700') }}"
-
-- name: Compute extra directories
-  ansible.builtin.set_fact:
-    _extra_dirs: >-
-      {%- set d = {} -%}
-      {%- for key, val in docker_stack.directories.items() -%}
-        {%- if key not in ['base','stack','config','data','secrets'] -%}
-          {%- set _ = d.update({
-                key: {
-                  'path': (val if val is string else val.path) | default(_stack_path ~ '/' ~ key),
-                  'owner': (val.owner if val is mapping else None) | default(docker_stack.directories_defaults.owner) | default('root'),
-                  'group': (val.group if val is mapping else None) | default(docker_stack.directories_defaults.group) | default('docker'),
-                  'mode': (val.mode if val is mapping else None) | default(docker_stack.directories_defaults.mode) | default('0755')
-                }
-              }) -%}
-        {%- endif -%}
-      {%- endfor -%}
-      {{ d }}
-
 # -------------------------------------------------
-# Debug extra directories
+# Compute stack + config paths
 # -------------------------------------------------
-# - name: Debug extra directories before merging
-#   ansible.builtin.debug:
-#     msg:
-#       extra_dirs: "{{ _extra_dirs }}"
 
-- name: Merge core and extra directories into docker_stack
+- name: Compute Traefik stack path
   ansible.builtin.set_fact:
-    docker_stack:
-      "{{ docker_stack | combine({'directories': _core_dirs | combine(_extra_dirs, recursive=True)}, recursive=True) }}"
+    _traefik_stack_path: >-
+      {{
+        traefik.stack_path
+        | default('/opt/stacks/traefik')
+      }}
+
+- name: Compute Traefik config path
+  ansible.builtin.set_fact:
+    _traefik_config_path: "{{ _traefik_stack_path ~ '/config' }}"
+
+- name: Merge Traefik directories
+  ansible.builtin.set_fact:
+    docker_stack: >-
+      {{
+        docker_stack | combine(
+          {
+            'directories': {
+              'stack': {
+                'path': _traefik_stack_path
+              },
+              'config': {
+                'path': _traefik_config_path,
+                'owner': 'root',
+                'group': 'docker',
+                'mode': '0755'
+              }
+            }
+          },
+          recursive=True
+        )
+      }}
+
+- name: Ensure traefik.dynamic.http.routers exists
+  ansible.builtin.set_fact:
+    traefik: >-
+      {{
+        traefik | default({}) | combine(
+          {
+            'dynamic': {
+              'http': {
+                'routers': {}
+              }
+            }
+          },
+          recursive=True
+        )
+      }}
 
 - name: Normalize Traefik HTTP routers
   ansible.builtin.set_fact:

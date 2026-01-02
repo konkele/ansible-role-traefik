@@ -7,7 +7,7 @@
 - name: Render Traefik dynamic configs
   template:
     src: "dynamic/{{ item }}.yml.j2"
-    dest: "{{ docker_stack.directories.dynamic.path }}/{{ item }}.yml"
+    dest: "{{ docker_stack.directories.config.path }}/{{ item }}.yml"
     mode: '0644'
   loop:
     - http
