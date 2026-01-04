@@ -92,3 +92,17 @@ traefik_defaults:
           loadBalancer:
             servers:
               - address: "10.0.0.2:53"
+
+docker_stacks_defaults:
+  traefik:
+    state: present
+    directories:
+      base:
+        path: /opt/stacks
+      stack: {}
+      config: {}
+
+    directories_defaults:
+      owner: root
+      group: docker
+      mode: "0755"

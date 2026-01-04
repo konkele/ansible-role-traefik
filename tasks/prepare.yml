@@ -4,55 +4,97 @@
 #   HTTP router configuration prior to rendering templates.
 # -------------------------------------------------------------------
 
-- name: Ensure docker_stack.state is defined
+# -------------------------------------------------------------------
+# Ensure Traefik state
+# -------------------------------------------------------------------
+- name: Ensure traefik state is defined
   ansible.builtin.set_fact:
-    docker_stack: >-
+    docker_stacks: >-
       {{
-        docker_stack
-        | combine(
-            {'state': docker_stack.state | default('present')},
-            recursive=True
-          )
+        docker_stacks | combine({
+          'traefik': docker_stacks.traefik | combine({
+            'state': docker_stacks.traefik.state | default('present')
+          }, recursive=True)
+        }, recursive=True)
       }}
 
-# -------------------------------------------------
-# Compute stack + config paths
-# -------------------------------------------------
-
-- name: Compute Traefik stack path
+# -------------------------------------------------------------------
+# Normalize directory defaults
+# -------------------------------------------------------------------
+- name: Cache Traefik directory defaults
   ansible.builtin.set_fact:
-    _traefik_stack_path: >-
+    _traefik_dir_defaults: "{{ docker_stacks_defaults.traefik.directories_defaults | default({}) }}"
+
+- name: Normalize Traefik directory defaults
+  ansible.builtin.set_fact:
+    _traefik_dir_defaults:
+      owner: "{{ _traefik_dir_defaults.owner | default('root') }}"
+      group: "{{ _traefik_dir_defaults.group | default('docker') }}"
+      mode:  "{{ _traefik_dir_defaults.mode  | default('0755') }}"
+
+# -------------------------------------------------------------------
+# Normalize Traefik directory structure
+# -------------------------------------------------------------------
+- name: Normalize Traefik directories
+  ansible.builtin.set_fact:
+    docker_stacks: >-
       {{
-        traefik.stack_path
-        | default('/opt/stacks/traefik')
-      }}
-
-- name: Compute Traefik config path
-  ansible.builtin.set_fact:
-    _traefik_config_path: "{{ _traefik_stack_path ~ '/config' }}"
-
-- name: Merge Traefik directories
-  ansible.builtin.set_fact:
-    docker_stack: >-
-      {{
-        docker_stack | combine(
-          {
+        docker_stacks | combine({
+          'traefik': docker_stacks.traefik | combine({
             'directories': {
-              'stack': {
-                'path': _traefik_stack_path
+
+              'base': {
+                'path': docker_stacks.traefik.directories.base.path
+                        | default('/opt/stacks'),
+                'owner': docker_stacks.traefik.directories.base.owner
+                          | default(_traefik_dir_defaults.owner),
+                'group': docker_stacks.traefik.directories.base.group
+                          | default(_traefik_dir_defaults.group),
+                'mode': docker_stacks.traefik.directories.base.mode
+                          | default(_traefik_dir_defaults.mode)
               },
+
+              'stack': {
+                'path': docker_stacks.traefik.directories.stack.path
+                        | default(
+                            (docker_stacks.traefik.directories.base.path | default('/opt/stacks'))
+                            ~ '/traefik'
+                          ),
+                'owner': docker_stacks.traefik.directories.stack.owner
+                          | default(_traefik_dir_defaults.owner),
+                'group': docker_stacks.traefik.directories.stack.group
+                          | default(_traefik_dir_defaults.group),
+                'mode': docker_stacks.traefik.directories.stack.mode
+                          | default(_traefik_dir_defaults.mode)
+              },
+
               'config': {
-                'path': _traefik_config_path,
-                'owner': 'root',
-                'group': 'docker',
-                'mode': '0755'
+                'path': docker_stacks.traefik.directories.config.path
+                        | default(
+                            (
+                              docker_stacks.traefik.directories.stack.path
+                              | default(
+                                  (docker_stacks.traefik.directories.base.path | default('/opt/stacks'))
+                                  ~ '/traefik'
+                                )
+                            ) ~ '/config'
+                          ),
+                'owner': docker_stacks.traefik.directories.config.owner
+                          | default(_traefik_dir_defaults.owner),
+                'group': docker_stacks.traefik.directories.config.group
+                          | default(_traefik_dir_defaults.group),
+                'mode': docker_stacks.traefik.directories.config.mode
+                          | default(_traefik_dir_defaults.mode)
               }
+
             }
-          },
-          recursive=True
-        )
+          }, recursive=True)
+        }, recursive=True)
       }}
 
+# -------------------------------------------------------------------
+# Normalize dynamic HTTP routers
+# -------------------------------------------------------------------
 - name: Ensure traefik.dynamic.http.routers exists
   ansible.builtin.set_fact:
     traefik: >-
