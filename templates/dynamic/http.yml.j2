@@ -9,14 +9,6 @@
   {%- endif -%}
 {%- endfor -%}
 
-{# Services derived from routers with servers #}
-{%- set services = {} -%}
-{%- for name, r in enabled.items() -%}
-  {%- if r.servers is defined and r.servers | length > 0 -%}
-    {%- set _ = services.update({ name: r.servers }) -%}
-  {%- endif -%}
-{%- endfor -%}
-
 {# Routers requiring basic auth #}
 {%- set auth_routers = {} -%}
 {%- for name, r in enabled.items() -%}
@@ -30,11 +22,18 @@ http:
   routers:
 {% for name, r in enabled.items() %}
     {{ name }}:
-      rule: {{ r.rule | quote }}
+      rule: >
+        Host(
+        {%- if r.host is string -%}
+          `{{ r.host }}`
+        {%- else -%}
+          {{ r.host | map('regex_replace', '^(.*)$', '`\\1`') | join(',') }}
+        {%- endif -%}
+        )
       entryPoints:
 {{ r.entryPoints | default(['websecure']) | to_nice_yaml(indent=2) | indent(8, true) }}
-      service: {{ r.service | default(name) }}
-{% if r.tls is defined and r.tls | bool %}
+      service: {{ r.service }}
+{% if r.tls | default(false) %}
       tls:
         certResolver: letsencrypt
 {% endif %}
@@ -50,24 +49,11 @@ http:
 {% endfor %}
 {% endif %}
 
-{%- set services = {} %}
-{% for name, r in enabled.items() %}
-  {% if r.servers is defined and r.servers | length > 0 %}
-    {% set svc_name = r.service | default(name) %}
-    {% set _ = services.update({ svc_name: r.servers }) %}
-  {% endif %}
-{% endfor %}
-
-{% if services %}
+{% if traefik.dynamic.http.services is defined %}
   services:
-{% for svc, servers in services.items() %}
-    {{ svc }}:
-      loadBalancer:
-        passHostHeader: true
-        servers:
-{% for s in servers %}
-          - url: "{{ s }}"
-{% endfor %}
+{% for name, svc in traefik.dynamic.http.services.items() %}
+    {{ name }}:
+{{ svc | to_nice_yaml(indent=2) | indent(6, true) }}
 {% endfor %}
 {% endif %}
 
