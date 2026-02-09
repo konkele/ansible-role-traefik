@@ -1,87 +1,115 @@
 # -------------------------------------------------------------------
 # Purpose:
-#   Normalize and finalize the docker_stack data structure before rendering
-#   templates or creating directories.
+#   Prepare Traefik-specific filesystem paths and normalize dynamic
+#   HTTP router configuration prior to rendering templates.
 # -------------------------------------------------------------------
 
-- name: Ensure docker_stack.state is defined
+# -------------------------------------------------------------------
+# Ensure Traefik state
+# -------------------------------------------------------------------
+- name: Ensure traefik state is defined
   ansible.builtin.set_fact:
-    docker_stack: >-
+    docker_stacks: >-
       {{
-        docker_stack
-        | combine(
-            {'state': docker_stack.state | default('present')},
-            recursive=True
-          )
+        docker_stacks | combine({
+          'traefik': docker_stacks.traefik | combine({
+            'state': docker_stacks.traefik.state | default('present')
+          }, recursive=True)
+        }, recursive=True)
       }}
 
-- name: Compute base and stack paths
+# -------------------------------------------------------------------
+# Normalize directory defaults
+# -------------------------------------------------------------------
+- name: Cache Traefik directory defaults
   ansible.builtin.set_fact:
-    _base_path: "{{ docker_stack.directories.base.path | default('/opt/stacks') }}"
+    _traefik_dir_defaults: "{{ docker_stacks_defaults.traefik.directories_defaults | default({}) }}"
 
-- name: Compute stack path
+- name: Normalize Traefik directory defaults
   ansible.builtin.set_fact:
-    _stack_path: "{{ docker_stack.directories.stack.path | default(_base_path ~ '/' ~ docker_stack.name) }}"
+    _traefik_dir_defaults:
+      owner: "{{ _traefik_dir_defaults.owner | default('root') }}"
+      group: "{{ _traefik_dir_defaults.group | default('docker') }}"
+      mode:  "{{ _traefik_dir_defaults.mode  | default('0755') }}"
 
-- name: Compute core directories
+# -------------------------------------------------------------------
+# Normalize Traefik directory structure
+# -------------------------------------------------------------------
+- name: Normalize Traefik directories
   ansible.builtin.set_fact:
-    _core_dirs:
-      base:
-        path: "{{ _base_path }}"
-        owner: "{{ docker_stack.directories.base.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.base.group | default(docker_stack.directories_defaults.group) | default('docker') }}"
-        mode: "{{ docker_stack.directories.base.mode | default(docker_stack.directories_defaults.mode) | default('0755') }}"
-      stack:
-        path: "{{ _stack_path }}"
-        owner: "{{ docker_stack.directories.stack.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.stack.group | default(docker_stack.directories_defaults.group) | default('docker') }}"
-        mode: "{{ docker_stack.directories.stack.mode | default(docker_stack.directories_defaults.mode) | default('0755') }}"
-      config:
-        path: "{{ docker_stack.directories.config.path | default(_stack_path ~ '/config') }}"
-        owner: "{{ docker_stack.directories.config.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.config.group | default(docker_stack.directories_defaults.group) | default('docker') }}"
-        mode: "{{ docker_stack.directories.config.mode | default(docker_stack.directories_defaults.mode) | default('0755') }}"
-      data:
-        path: "{{ docker_stack.directories.data.path | default(_stack_path ~ '/data') }}"
-        owner: "{{ docker_stack.directories.data.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.data.group | default(docker_stack.directories_defaults.group) | default('docker') }}"
-        mode: "{{ docker_stack.directories.data.mode | default(docker_stack.directories_defaults.mode) | default('0755') }}"
-      secrets:
-        path: "{{ docker_stack.directories.secrets.path | default(_stack_path ~ '/secrets') }}"
-        owner: "{{ docker_stack.directories.secrets.owner | default(docker_stack.directories_defaults.owner) | default('root') }}"
-        group: "{{ docker_stack.directories.secrets.group | default(docker_stack.directories_defaults.group) | default('root') }}"
-        mode: "{{ docker_stack.directories.secrets.mode | default(docker_stack.directories_defaults.mode) | default('0700') }}"
+    docker_stacks: >-
+      {{
+        docker_stacks | combine({
+          'traefik': docker_stacks.traefik | combine({
+            'directories': {
 
-- name: Compute extra directories
+              'base': {
+                'path': docker_stacks.traefik.directories.base.path
+                        | default('/opt/stacks'),
+                'owner': docker_stacks.traefik.directories.base.owner
+                          | default(_traefik_dir_defaults.owner),
+                'group': docker_stacks.traefik.directories.base.group
+                          | default(_traefik_dir_defaults.group),
+                'mode': docker_stacks.traefik.directories.base.mode
+                          | default(_traefik_dir_defaults.mode)
+              },
+
+              'stack': {
+                'path': docker_stacks.traefik.directories.stack.path
+                        | default(
+                            (docker_stacks.traefik.directories.base.path | default('/opt/stacks'))
+                            ~ '/traefik'
+                          ),
+                'owner': docker_stacks.traefik.directories.stack.owner
+                          | default(_traefik_dir_defaults.owner),
+                'group': docker_stacks.traefik.directories.stack.group
+                          | default(_traefik_dir_defaults.group),
+                'mode': docker_stacks.traefik.directories.stack.mode
+                          | default(_traefik_dir_defaults.mode)
+              },
+
+              'config': {
+                'path': docker_stacks.traefik.directories.config.path
+                        | default(
+                            (
+                              docker_stacks.traefik.directories.stack.path
+                              | default(
+                                  (docker_stacks.traefik.directories.base.path | default('/opt/stacks'))
+                                  ~ '/traefik'
+                                )
+                            ) ~ '/config'
+                          ),
+                'owner': docker_stacks.traefik.directories.config.owner
+                          | default(_traefik_dir_defaults.owner),
+                'group': docker_stacks.traefik.directories.config.group
+                          | default(_traefik_dir_defaults.group),
+                'mode': docker_stacks.traefik.directories.config.mode
+                          | default(_traefik_dir_defaults.mode)
+              }
+
+            }
+          }, recursive=True)
+        }, recursive=True)
+      }}
+
+# -------------------------------------------------------------------
+# Normalize dynamic HTTP routers
+# -------------------------------------------------------------------
+- name: Ensure traefik.dynamic.http.routers exists
   ansible.builtin.set_fact:
-    _extra_dirs: >-
-      {%- set d = {} -%}
-      {%- for key, val in docker_stack.directories.items() -%}
-        {%- if key not in ['base','stack','config','data','secrets'] -%}
-          {%- set _ = d.update({
-                key: {
-                  'path': (val if val is string else val.path) | default(_stack_path ~ '/' ~ key),
-                  'owner': (val.owner if val is mapping else None) | default(docker_stack.directories_defaults.owner) | default('root'),
-                  'group': (val.group if val is mapping else None) | default(docker_stack.directories_defaults.group) | default('docker'),
-                  'mode': (val.mode if val is mapping else None) | default(docker_stack.directories_defaults.mode) | default('0755')
-                }
-              }) -%}
-        {%- endif -%}
-      {%- endfor -%}
-      {{ d }}
-
-# -------------------------------------------------
-# Debug extra directories
-# -------------------------------------------------
-# - name: Debug extra directories before merging
-#   ansible.builtin.debug:
-#     msg:
-#       extra_dirs: "{{ _extra_dirs }}"
-
-- name: Merge core and extra directories into docker_stack
-  ansible.builtin.set_fact:
-    docker_stack:
-      "{{ docker_stack | combine({'directories': _core_dirs | combine(_extra_dirs, recursive=True)}, recursive=True) }}"
+    traefik: >-
+      {{
+        traefik | default({}) | combine(
+          {
+            'dynamic': {
+              'http': {
+                'routers': {}
+              }
+            }
+          },
+          recursive=True
+        )
+      }}
 
 - name: Normalize Traefik HTTP routers
   ansible.builtin.set_fact:
@@ -89,35 +117,28 @@
       {%- set out = {} -%}
       {%- for name, r in traefik.dynamic.http.routers.items() -%}
         {%- if r.enabled | default(false) | bool -%}
-          {# --- normalize host(s) into list --- #}
-          {%- set hosts = (
-                r.host is iterable and r.host is not string
-                and r.host
-                or [r.host]
-              )
-              | reject('equalto', None)
-              | map('string')
-              | list
+          {# --- ensure host is always a list --- #}
+          {%- set hosts = (r.host if r.host is iterable and r.host is not string else [r.host])
+                           | reject('equalto', None)
+                           | map('string')
+                           | list -%}
+          
+          {# --- build OR-ed Host() rule --- #}
+          {%- set rule = hosts
+                | map('regex_replace', '^(.*)$', 'Host(`\\1`)')
+                | join(' || ')
           -%}
-          {# --- build OR Host() rule --- #}
-          {%- set rule = r.rule
-                | default(hosts | map('regex_replace', '^(.*)$', 'Host(`\\1`)') | join(' || '))
-          -%}
-          {# --- build normalized router --- #}
+
+          {# --- combine back into router dict --- #}
           {%- set normalized = r | combine({
                 'hosts': hosts,
-                'rule': rule,
-                'tls': r.tls | default(false) | bool
+                'rule': rule
             }, recursive=True)
           -%}
-          {# --- remove legacy host key --- #}
-          {%- set normalized = normalized | dict2items
-                | rejectattr('key', 'equalto', 'host')
-                | items2dict
-          -%}
-          {%- set _ = out.update({ name: normalized }) -%}
+
+          {%- set _ = out.update({name: normalized}) -%}
         {%- else -%}
-          {%- set _ = out.update({ name: r }) -%}
+          {%- set _ = out.update({name: r}) -%}
         {%- endif -%}
       {%- endfor -%}
       {{ out }}

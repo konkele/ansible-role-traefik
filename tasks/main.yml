@@ -1,43 +1,47 @@
 # -----------------------------------------------------------------------------
-# Traefik Role Main Task File
-# -----------------------------------------------------------------------------
-#
 # Purpose:
-#   Orchestrate Traefik deployment:
-#     1. Load optional vars file
-#     2. Merge configuration layers (defaults < group < host)
-#     3. Prepare directories and normalize variables
-#     4. Render dynamic templates
-#     5. Deploy stack via docker_stack role
-#
-# Notes:
-#   - All directories and services are derived from `docker_stack` structure
-#   - Dynamic HTTP, TCP, UDP, and TLS configs are supported
-# -----------------------------------------------------------------------------
+#   Orchestrate Traefik configuration using the docker_stacks data model.
+## -----------------------------------------------------------------------------
 
-- name: Load traefik variables
-  include_vars:
-    file: "{{ traefik_vars_file }}"
-  when: traefik_vars_file is defined
-
+# -------------------------------------------------------------------
+# Merge variables (defaults < inventory < override)
+# -------------------------------------------------------------------
 - name: Merge variables
   import_tasks: merge.yml
   vars:
     merge_var_specs:
       - name: traefik
-      - name: docker_stack
+      - name: docker_stacks
 
-- name: Prepare Variables
+# -------------------------------------------------------------------
+# Normalize variables and paths
+# -------------------------------------------------------------------
+- name: Prepare variables
   import_tasks: prepare.yml
 
-- name: Ensure stack directories
-  import_tasks: directories.yml
-  when: docker_stack.state == 'present'
+# -------------------------------------------------------------------
+# Ensure required directories exist
+# -------------------------------------------------------------------
+- name: Create Traefik config directory (and parents)
+  ansible.builtin.file:
+    path: "{{ docker_stacks.traefik.directories.config.path }}"
+    state: directory
+    owner: "{{ docker_stacks.traefik.directories.config.owner }}"
+    group: "{{ docker_stacks.traefik.directories.config.group }}"
+    mode: "{{ docker_stacks.traefik.directories.config.mode }}"
+  when: docker_stacks.traefik.state | default('present') == 'present'
 
-- name: Render Traefik dynamic configurations
-  import_tasks: render.yml
-  when: docker_stack.state == 'present'
-
-- name: Deploy Traefik using the role docker_stack
-  include_role:
-    name: docker_stack
+# -------------------------------------------------------------------
+# Render dynamic configuration
+# -------------------------------------------------------------------
+- name: Render Traefik dynamic configs
+  template:
+    src: "dynamic/{{ item }}.yml.j2"
+    dest: "{{ docker_stacks.traefik.directories.config.path }}/{{ item }}.yml"
+    mode: '0644'
+  loop:
+    - http
+    - tcp
+    - udp
+    - tls
+  when: docker_stacks.traefik.state | default('present') == 'present'

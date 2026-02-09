@@ -1,73 +1,44 @@
-{# Collect HTTP routers #}
-{%- set routers = traefik.dynamic.http.routers | default({}) -%}
+{# -------------------------------------------------------------------------- #}
+{# Traefik Dynamic HTTP Configuration Template                                 #}
+{# -------------------------------------------------------------------------- #}
 
-{# Enabled routers only #}
-{%- set enabled = {} -%}
-{%- for name, r in routers.items() -%}
-  {%- if r.enabled | default(false) | bool -%}
-    {%- set _ = enabled.update({ name: r }) -%}
-  {%- endif -%}
-{%- endfor -%}
-
-{# Services derived from routers with servers #}
-{%- set services = {} -%}
-{%- for name, r in enabled.items() -%}
-  {%- if r.servers is defined and r.servers | length > 0 -%}
-    {%- set _ = services.update({ name: r.servers }) -%}
-  {%- endif -%}
-{%- endfor -%}
-
-{# Routers requiring basic auth #}
 {%- set auth_routers = {} -%}
-{%- for name, r in enabled.items() -%}
-  {%- if r.basic_auth_users is defined and r.basic_auth_users | length > 0 -%}
-    {%- set _ = auth_routers.update({ name: r }) -%}
-  {%- endif -%}
-{%- endfor -%}
 
 http:
-{% if enabled %}
   routers:
-{% for name, r in enabled.items() %}
+{% for name, r in traefik.dynamic.http.routers.items() %}
+{% if r.enabled | default(false) | bool %}
     {{ name }}:
-      rule: {{ r.rule | quote }}
+      rule: >
+        {{ r.rule }}
       entryPoints:
 {{ r.entryPoints | default(['websecure']) | to_nice_yaml(indent=2) | indent(8, true) }}
-      service: {{ r.service | default(name) }}
-{% if r.tls is defined and r.tls | bool %}
-      tls:
-        certResolver: letsencrypt
-{% endif %}
-{% if r.middlewares is defined or name in auth_routers %}
+      service: {{ r.service }}
+{% if r.middlewares is defined or (r.basic_auth_users is defined and r.basic_auth_users | length > 0) %}
       middlewares:
-{% for mw in r.middlewares | default([]) | unique %}
+{% for mw in r.middlewares | default([]) %}
         - {{ mw }}
 {% endfor %}
-{% if name in auth_routers %}
+{% if r.basic_auth_users is defined and r.basic_auth_users | length > 0 %}
         - {{ name }}-auth
+{% set _ = auth_routers.update({ name: r }) %}
+{% endif %}
+{% endif %}
+{% if r.tls is mapping %}
+      tls:
+{{ r.tls | to_nice_yaml(indent=2) | indent(8, true) }}
 {% endif %}
 {% endif %}
 {% endfor %}
-{% endif %}
 
-{%- set services = {} %}
-{% for name, r in enabled.items() %}
-  {% if r.servers is defined and r.servers | length > 0 %}
-    {% set svc_name = r.service | default(name) %}
-    {% set _ = services.update({ svc_name: r.servers }) %}
-  {% endif %}
-{% endfor %}
-
-{% if services %}
+{% if traefik.dynamic.http.services is defined %}
   services:
-{% for svc, servers in services.items() %}
-    {{ svc }}:
-      loadBalancer:
-        passHostHeader: true
-        servers:
-{% for s in servers %}
-          - url: "{{ s }}"
-{% endfor %}
+{% for name, svc in traefik.dynamic.http.services.items() %}
+{% set router = traefik.dynamic.http.routers[name] | default({}) %}
+{% if router.enabled | default(false) | bool %}
+    {{ name }}:
+{{ svc | to_nice_yaml(indent=2) | indent(6, true) }}
+{% endif %}
 {% endfor %}
 {% endif %}
 

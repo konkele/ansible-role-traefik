@@ -1,100 +1,32 @@
-# Ansible Role: Traefik
+# Ansible Role: Traefik Dynamic Configuration
 
-This **`traefik` Ansible role** deploys and manages **Traefik v3.x** as a Docker-based reverse proxy with a strong focus on **Docker Swarm**, **inventory-driven configuration**, and **hot‑reloadable dynamic routing**.
+This **`traefik` Ansible role** generates **Traefik v3.x dynamic configuration files** for HTTP, TCP, UDP routers and TLS options.
 
-The role is designed to be **deterministic, layered, and reusable** across multiple clusters and environments. All Traefik configuration—static, dynamic, and deployment—is expressed as structured data and rendered consistently at runtime.
+> **Note:** This role **does not deploy Traefik**, manage secrets, or create data directories. Its focus is **purely on rendering dynamic configuration files** in a specified config directory.
+
+> **Intended Use:** This role can be used in combination with [ansible-role-docker_stack](https://github.com/konkele/ansible-role-docker_stack) to deploy containerized stacks, but usage of that role is **optional**.
 
 ---
 
 ## Key Capabilities
 
-> **Dependency:** This role delegates all Docker Compose / Swarm stack creation to the shared role:
->
-> **ansible-role-docker_stack** – [https://github.com/konkele/ansible-role-docker_stack](https://github.com/konkele/ansible-role-docker_stack)
->
-> The Traefik role is responsible for *intent, normalization, and rendering*; the `docker_stack` role is responsible for *materializing* that intent into Docker resources.
+* Renders Traefik dynamic configuration files into a **config directory**:
 
-### Deployment
-
-* Deploys Traefik via a shared **`docker_stack` role**
-* Supports **Docker Swarm** (primary target)
-* Compose-compatible data model (Compose v2 semantics)
-* Safe rolling updates (`start-first`, rollback on failure)
-* Manager-only placement by default
-
-### Configuration Model
-
-* **Strict layered merge** of configuration sources
-* Inventory expresses *intent*, not rendered YAML
-* Canonical variables always exist after merge
-
-Merge precedence (lowest → highest):
-
-```
-<var>_defaults
-<var>_group
-docker_stack_group
-<var>_host
-docker_stack_host
-<var>_override
-```
-
-Merged outputs are exposed as:
-
-* `traefik`
-* `docker_stack`
+  * `http.yml`
+  * `tcp.yml`
+  * `udp.yml`
+  * `tls.yml`
+* Supports inventory-driven router and service definitions.
+* Automatically normalizes HTTP routers, hosts, and rules.
+* Handles basic authentication middleware for HTTP routers.
+* TLS options are hot-reloadable and fully configurable.
+* Optional override of the config directory via `traefik_config_path` variable.
 
 ---
 
-## Traefik Configuration Scope
+## Configuration Model
 
-### Static Configuration (Container Arguments)
-
-This role does **not** render a standalone `traefik.yml` file.
-
-All **static Traefik configuration** is expressed via **container command arguments** defined in the Docker Compose / Swarm service specification:
-
-```
-docker_stack.services.controller.command
-```
-
-This includes:
-
-* Providers (Swarm, file)
-* EntryPoints and redirects
-* TLS defaults and certificate resolvers
-* ACME / Let’s Encrypt configuration
-* Logging and access logs
-* Global Traefik flags
-
-Changes to static configuration require a **service update / restart**, which is handled safely by Docker Swarm rolling updates.
-
----
-
-### Dynamic Configuration (Hot‑Reloadable)
-
-Rendered into individual files under:
-
-```
-{{ docker_stack.directories.dynamic.path }}
-```
-
-Dynamic files:
-
-* `http.yml`
-* `tcp.yml`
-* `udp.yml`
-* `tls.yml`
-
-Dynamic changes are picked up automatically by Traefik without a container restart.
-
----
-
-## HTTP Routers (Dynamic)
-
-HTTP routers are fully inventory-driven and normalized automatically.
-
-### Supported Inputs
+Dynamic configuration is expressed as structured variables:
 
 ```yaml
 traefik:
@@ -111,156 +43,69 @@ traefik:
             - internal-only
           basic_auth_users:
             - "admin:$apr1$hash"
-```
-
-### Normalization Guarantees
-
-For **enabled routers**, the role guarantees:
-
-* `hosts` is always a list
-* `rule` is always generated or honored if explicitly defined
-* `Host()` rules are OR‑joined automatically
-* Legacy `host` key is removed after normalization
-
-Disabled routers pass through untouched.
-
----
-
-## Services (HTTP / TCP / UDP)
-
-* Services are derived automatically from router definitions
-* HTTP services support load‑balanced URL backends
-* TCP / UDP services support address backends
-
-No duplicated service definitions are required.
-
----
-
-## Middlewares
-
-### Built‑in Defaults
-
-Defined in `defaults/main.yml`:
-
-* `security-headers`
-
-  * SSL redirect
-  * HSTS (preload)
-  * Frame deny
-  * XSS protection
-  * Content type sniff prevention
-
-* `internal-only`
-
-  * RFC1918 allowlist
-  * Loopback
-
-### Per‑Router Auth
-
-If `basic_auth_users` is present on a router:
-
-* A router‑specific `*-auth` middleware is generated
-* Automatically attached to the router
-
----
-
-## TLS Options
-
-TLS options are rendered separately and hot‑reloadable:
-
-```yaml
-traefik:
-  dynamic:
+    tcp:
+      routers:
+        mqtt:
+          enabled: false
+          entryPoints: [mqttsecure]
+          rule: "HostSNI(`mqtt.example.com`)"
+          service: mqtt
+    udp:
+      routers:
+        dns:
+          enabled: false
+          entryPoints: [dns]
+          service: dns
     tls:
       min_version: VersionTLS13
       sni_strict: true
 ```
 
-Rendered via:
+### Normalization
 
-```
-roles/traefik/templates/dynamic/tls.yml.j2
-```
+For **enabled HTTP routers**:
+
+* `hosts` is always a list.
+* `rule` is generated automatically if not explicitly defined.
+* Legacy `host` keys are removed after normalization.
+* Routers with `basic_auth_users` automatically get a router-specific `*-auth` middleware attached.
 
 ---
 
 ## Directory Layout
 
-All filesystem paths are computed safely and deterministically.
-
-Default layout:
+Dynamic configuration files are rendered under the Traefik stack config directory, which can be overridden per role run using `traefik_config_path`:
 
 ```
-/opt/stacks/
-  traefik/
-    config/
-      dynamic/
-    data/
-    secrets/
+{{ docker_stack.directories.config.path }}/
+  http.yml
+  tcp.yml
+  udp.yml
+  tls.yml
 ```
 
-### Design Notes
-
-* Directories are **computed first**, then merged
-* No incremental mutation of `docker_stack`
-* Extra directories may be defined freely
-
----
-
-## Secrets
-
-Secrets are defined declaratively and injected into Swarm.
-
-```yaml
-docker_stack:
-  secrets:
-    cf_dns_api_token:
-      value: "super-secret"
-```
-
-* Stored securely on the host
-* Mounted via Docker secrets
-* Secret hash is exposed via label (`docker.secrets.hash`)
-* Changing secrets triggers a controlled rolling update
-
----
-
-## Networks
-
-* Uses an **external overlay network** by default (`proxy`)
-* Attachable for downstream stacks
-
-```yaml
-docker_stack:
-  networks:
-    proxy:
-      external: true
-      driver: overlay
-      attachable: true
-```
+*Directories for data or secrets are not created.*
 
 ---
 
 ## Role Execution Flow
 
-1. Load optional vars file (`traefik_vars_file`)
-2. Merge layered configuration (`merge.yml`)
-3. Normalize and finalize directory structure
-4. Normalize HTTP routers
-5. Ensure directories exist
-6. Render dynamic configuration files
-7. Delegate deployment to `docker_stack` role
+1. Merge inventory and default variables.
+2. Normalize HTTP, TCP, and UDP routers.
+3. Apply optional `traefik_config_path` override.
+4. Render dynamic configuration files into the config directory.
 
 ---
 
 ## Example Playbook
 
 ```yaml
-- name: Deploy Traefik
+- name: Generate Traefik Dynamic Config
   hosts: swarm_managers
   become: true
   vars:
-    traefik_vars_file: group_vars/traefik.yml
+    # Optional override for config directory
+    traefik_config_path: /opt/traefik/custom_config
   roles:
     - traefik
 ```
@@ -269,21 +114,12 @@ docker_stack:
 
 ## Design Principles
 
-* Inventory expresses **intent**, not rendered YAML
-* Deterministic merges eliminate config drift
-* Hot‑reload wherever Traefik supports it
-* No hidden defaults
-* Templates tolerate future Traefik features
-* Safe rolling updates by default
-
----
-
-## Notes / Updates in v3.x
-
-* Updated role to support **Traefik v3.x**
-* Dynamic configuration templates now fully compatible with v3 routing syntax
-* Handlers updated to use **community.docker.docker_compose_v2** for safe restarts
-* Secrets and TLS configuration aligned with Swarm deployment best practices
+* Inventory expresses **intent**, not static rendered YAML.
+* Deterministic merges eliminate config drift.
+* Hot-reload wherever Traefik supports it.
+* Minimal filesystem footprint — only dynamic configuration is created.
+* Templates tolerate future Traefik features.
+* Compatible with `ansible-role-docker_stack` but not dependent on it.
 
 ---
 
